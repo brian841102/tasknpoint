@@ -28,8 +28,6 @@ from mjlab.utils.torch import configure_torch_backends
 class EvaluateConfig:
   """Configuration for policy evaluation."""
 
-  wandb_run_path: str
-  """W&B run path in format 'entity/project/run_id'."""
   target_x_min: float
   """Minimum x of the goal-point range in anchor (pelvis) frame.
   In box-pickup mode this is the *box-centre* x; hand targets are derived automatically."""
@@ -43,6 +41,10 @@ class EvaluateConfig:
   """Minimum z of the goal-point range in anchor (pelvis) frame."""
   target_z_max: float
   """Maximum z of the goal-point range in anchor (pelvis) frame."""
+  wandb_run_path: str | None = None
+  """W&B run path in format 'entity/project/run_id'. Required unless --checkpoint-file is given."""
+  checkpoint_file: str | None = None
+  """Local checkpoint (.pt) to evaluate instead of downloading one from W&B."""
   box_pickup_mode: bool = False
   """When True, treat the task as two-handed box pickup (e.g. cast_pickup_* motions).
   Goal coordinates are sampled as *box-centre* positions in anchor frame.  The two
@@ -74,6 +76,13 @@ class EvaluateConfig:
   goal-phase centre."""
   output_file: str | None = None
   """Optional path to save metrics as JSON."""
+  first_motion_only: bool = False
+  """Only accumulate goal metrics during the first motion of each episode. After a motion
+  finishes the command samples a new motion AND a new random target from the training
+  distribution, so later repetitions no longer test the injected goal point."""
+  per_env_file: str | None = None
+  """Optional .npz path to save per-episode results (goal point, min error, success flags,
+  phase offset) for analysing which goal regions are reachable."""
 
 
 def _plot_phase_histogram(
@@ -229,6 +238,8 @@ def run_evaluate(task_id: str, cfg: EvaluateConfig) -> dict[str, float]:
     motion_cmd_cfg.motion_files = motion_files
     filter_motion_cmd_cfg(motion_cmd_cfg, motion_set.enabled_names if motion_set else motion_names)
   else:
+    if cfg.wandb_run_path is None:
+      raise ValueError("Pass --motion-config or --registry-name when evaluating a local --checkpoint-file.")
     run = api.run(cfg.wandb_run_path)
     arts = [a for a in run.used_artifacts() if a.type == "motions"]
     if not arts:
@@ -248,10 +259,17 @@ def run_evaluate(task_id: str, cfg: EvaluateConfig) -> dict[str, float]:
   env = ManagerBasedRlEnv(cfg=env_cfg, device=device)
   env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
-  log_root_path = (Path("logs") / "rsl_rl" / agent_cfg.experiment_name).resolve()
-  resume_path, _ = get_wandb_checkpoint_path(
-    log_root_path, Path(cfg.wandb_run_path), cfg.wandb_checkpoint_name
-  )
+  if cfg.checkpoint_file is not None:
+    resume_path = Path(cfg.checkpoint_file)
+    if not resume_path.exists():
+      raise FileNotFoundError(f"Checkpoint file not found: {resume_path}")
+  elif cfg.wandb_run_path is not None:
+    log_root_path = (Path("logs") / "rsl_rl" / agent_cfg.experiment_name).resolve()
+    resume_path, _ = get_wandb_checkpoint_path(
+      log_root_path, Path(cfg.wandb_run_path), cfg.wandb_checkpoint_name
+    )
+  else:
+    raise ValueError("Provide either --checkpoint-file or --wandb-run-path.")
   print(f"[INFO] Loading checkpoint: {resume_path}")
 
   runner_cls = load_runner_cls(task_id) or MjlabOnPolicyRunner
@@ -291,6 +309,8 @@ def run_evaluate(task_id: str, cfg: EvaluateConfig) -> dict[str, float]:
 
   done_envs = torch.zeros(cfg.num_envs, dtype=torch.bool, device=device)
   success = torch.zeros(cfg.num_envs, dtype=torch.bool, device=device)
+  # Set once an env's first motion has played to the end (only used with first_motion_only).
+  first_motion_done = torch.zeros(cfg.num_envs, dtype=torch.bool, device=device)
 
   print(f"[INFO] Running {cfg.num_envs} evaluation episodes...")
 
@@ -301,6 +321,9 @@ def run_evaluate(task_id: str, cfg: EvaluateConfig) -> dict[str, float]:
     obs, _, dones, _ = env.step(actions)
 
     active = ~done_envs
+    if cfg.first_motion_only:
+      active = active & ~first_motion_done
+      first_motion_done |= command.time_steps >= motion_lengths.long()
     if active.any():
       cur_err = compute_goal_position_error(command, ())
       improved = active & (cur_err < min_goal_pos_error)
@@ -367,6 +390,22 @@ def run_evaluate(task_id: str, cfg: EvaluateConfig) -> dict[str, float]:
     with open(output_path, "w") as f:
       json.dump(metrics, f, indent=2)
     print(f"[INFO] Metrics saved to {output_path}")
+
+  if cfg.per_env_file:
+    import numpy as np
+
+    per_env_path = Path(cfg.per_env_file)
+    per_env_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(
+      per_env_path,
+      goal_pts=goal_pts.cpu().numpy(),
+      min_goal_pos_error=min_goal_pos_error.cpu().numpy(),
+      success=success.cpu().numpy(),
+      combined_success=in_target_combined.cpu().numpy(),
+      time_offset_s=time_offset_s.cpu().numpy(),
+      nominal_target=command._target_pos_means_t[chosen, 0, :].cpu().numpy(),
+    )
+    print(f"[INFO] Per-episode results saved to {per_env_path}")
 
   env.close()
   return metrics

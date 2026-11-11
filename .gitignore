@@ -11,3 +11,4 @@ retarget/videos/
 tasknpoint/videos/*
 tasknpoint/**/.mp4
 **/*.mp4
+*.log

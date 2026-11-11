@@ -1,0 +1,13 @@
+# Single motion: backhand reconstructed from our own video (see README_CN.md).
+# train_prefix = <your wandb entity>/csv_to_npz. csv_to_npz.py uploads to your
+# DEFAULT entity, which may be a team (e.g. "brian841102-itri"), not your username.
+
+[robot]
+xml = "robots/training/g1_27dof_training_tennis.xml"
+
+[registry]
+train_prefix = "brian841102-itri/csv_to_npz"
+
+[[motions]]
+name    = "backhand_custom"
+enabled = true

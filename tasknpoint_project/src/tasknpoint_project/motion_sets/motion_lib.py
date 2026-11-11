@@ -250,6 +250,86 @@ MOTION_LIB: dict[str, MotionCfg] = {
       ),
     ],
   ),
+  # Backhand reconstructed from videos/tennis/backhand.mp4 (frames 60-140).
+  # Contact phase 0.63 = racket_contact speed onset (clip frame 50 of 80).
+  "backhand_custom": MotionCfg(
+    name="backhand_custom",
+    sampling_weight=1.0,
+    probe_points=[("racket_contact", 0.630)],
+    sub_targets=[
+      MotionGoalCfg(
+        goal_type="position",
+        goal_weight=100.0,
+        source_link="racket_contact",
+        source_type="site",
+        target_pos_mean={"x": 0.42, "y": -0.49, "z": 0.54},  # probe init frame
+        target_pos_std={"x": 0.10, "y": 0.40, "z": 0.40},
+        target_phase_start=0.626,
+        target_phase_end=0.634,
+      ),
+      MotionGoalCfg(
+        goal_type="velocity",
+        goal_weight=10.0,
+        source_link="racket_contact",
+        source_type="site",
+        target_phase_start=0.618,
+        target_phase_end=0.642,
+        target_vel_mean={"x": 1.0, "y": 0.0, "z": 0.1},
+        target_vel_std={"x": 0.0, "y": 0.0, "z": 0.2},
+      ),
+      MotionGoalCfg(
+        goal_type="orientation",
+        goal_weight=10.0,
+        source_link="racket_contact",
+        source_type="site",
+        target_phase_start=0.626,
+        target_phase_end=0.634,
+        target_orientation_mean={"roll": -0.85, "pitch": 0.22, "yaw": 0.11},  # probe ori init
+        target_orientation_std={"roll": 0.1, "pitch": 0.0, "yaw": 0.0},
+        orientation_axis="y",
+      ),
+    ],
+  ),
+  # Forehand reconstructed from videos/tennis/backhand_new.mp4 (frames 172-240, 30fps).
+  # Contact phase 0.75 = racket_contact furthest in front of the body (clip frame 51 of 69).
+  "forehand_new": MotionCfg(
+    name="forehand_new",
+    sampling_weight=1.0,
+    probe_points=[("racket_contact", 0.750)],
+    sub_targets=[
+      MotionGoalCfg(
+        goal_type="position",
+        goal_weight=100.0,
+        source_link="racket_contact",
+        source_type="site",
+        target_pos_mean={"x": 0.48, "y": -0.60, "z": 0.28},  # probe init frame
+        target_pos_std={"x": 0.10, "y": 0.40, "z": 0.40},
+        target_phase_start=0.746,
+        target_phase_end=0.754,
+      ),
+      MotionGoalCfg(
+        goal_type="velocity",
+        goal_weight=10.0,
+        source_link="racket_contact",
+        source_type="site",
+        target_phase_start=0.738,
+        target_phase_end=0.762,
+        target_vel_mean={"x": 1.0, "y": 0.0, "z": 0.1},
+        target_vel_std={"x": 0.0, "y": 0.0, "z": 0.2},
+      ),
+      MotionGoalCfg(
+        goal_type="orientation",
+        goal_weight=10.0,
+        source_link="racket_contact",
+        source_type="site",
+        target_phase_start=0.746,
+        target_phase_end=0.754,
+        target_orientation_mean={"roll": 0.17, "pitch": 0.62, "yaw": -0.51},  # probe ori init
+        target_orientation_std={"roll": 0.1, "pitch": 0.0, "yaw": 0.0},
+        orientation_axis="y",
+      ),
+    ],
+  ),
   "two_step_forehand": MotionCfg(
     name="two_step_forehand",
     sampling_weight=1.0,

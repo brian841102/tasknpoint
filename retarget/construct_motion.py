@@ -186,6 +186,16 @@ if __name__ == "__main__":
         help="Skip the interactive viewer (no X display / xvfb needed). "
         "Use with --record_video to still produce a video via offscreen EGL rendering.",
     )
+    parser.add_argument(
+        "--yaw_only_align",
+        default=False,
+        action="store_true",
+        help="Align only the heading (yaw) of the start frame instead of its full "
+        "orientation, then shift the clip vertically so the lowest ankle touches "
+        "the ground. Use when the clip does not start from an upright stance "
+        "(e.g. crouched / leaning), which otherwise tilts the ground plane and "
+        "leaves the feet floating.",
+    )
     args = parser.parse_args()
 
     # Note: MUJOCO_GL for --headless is set at the top of this file, before the
@@ -230,8 +240,44 @@ if __name__ == "__main__":
     pos_offset = np.array([0.0, 0.0, INITIAL_ROBOT_HEIGHT]) - first_frame_qpos[:3]
 
     initial_quat_xyzw = first_frame_qpos[[4, 5, 6, 3]]  # wxyz -> xyzw
-    offset_rot = R.from_quat(initial_quat_xyzw).inv()
+    if args.yaw_only_align:
+        # Keep the start frame's roll/pitch: the human data is already gravity
+        # aligned, so removing them would tilt the whole clip (ground included).
+        initial_yaw = R.from_quat(initial_quat_xyzw).as_euler("ZYX")[0]
+        offset_rot = R.from_euler("z", initial_yaw).inv()
+    else:
+        offset_rot = R.from_quat(initial_quat_xyzw).inv()
     start_pos = first_frame_qpos[:3].copy()
+    z_shift = 0.0
+
+    if args.yaw_only_align:
+        # Pre-pass with a fresh solver: find the lowest ankle over the clip and
+        # shift the clip so it matches the ankle height of the upright robot.
+        ground_model = mujoco.MjModel.from_xml_path(str(_gmr_params.ROBOT_XML_DICT[args.robot]))
+        ground_data = mujoco.MjData(ground_model)
+        ankle_ids = [ground_model.body(n).id for n in ("left_ankle_roll_link", "right_ankle_roll_link")]
+
+        ground_data.qpos[:] = 0.0
+        ground_data.qpos[2] = INITIAL_ROBOT_HEIGHT
+        ground_data.qpos[3] = 1.0
+        mujoco.mj_kinematics(ground_model, ground_data)
+        standing_ankle_z = min(ground_data.xpos[b][2] for b in ankle_ids)
+
+        pre_retarget = GMR(
+            actual_human_height=actual_human_height,
+            src_human="smplx",
+            tgt_robot=args.robot,
+        )
+        min_ankle_z = np.inf
+        for frame in smplx_data_frames[start_frame:]:
+            q = pre_retarget.retarget(frame)
+            ground_data.qpos[:] = q
+            ground_data.qpos[:3] = offset_rot.apply(q[:3] - start_pos) + np.array([0.0, 0.0, INITIAL_ROBOT_HEIGHT])
+            ground_data.qpos[3:7] = (offset_rot * R.from_quat(q[[4, 5, 6, 3]])).as_quat()[[3, 0, 1, 2]]
+            mujoco.mj_kinematics(ground_model, ground_data)
+            min_ankle_z = min(min_ankle_z, *(ground_data.xpos[b][2] for b in ankle_ids))
+        z_shift = standing_ankle_z - min_ankle_z
+        print(f"Yaw-only align: initial yaw {np.degrees(initial_yaw):.1f} deg, z_shift {z_shift:+.3f} m")
 
     print(f"Calculated pos_offset: {pos_offset}")
     print(f"Calculated offset_rot: {offset_rot.as_euler('xyz', degrees=True)} deg")
@@ -247,7 +293,7 @@ if __name__ == "__main__":
         qpos = retarget.retarget(smplx_data_frames[i])
 
         rotated_delta = offset_rot.apply(qpos[:3] - start_pos)
-        adjusted_root_pos = rotated_delta + np.array([0.0, 0.0, INITIAL_ROBOT_HEIGHT])
+        adjusted_root_pos = rotated_delta + np.array([0.0, 0.0, INITIAL_ROBOT_HEIGHT + z_shift])
 
         root_rot_xyzw = qpos[[4, 5, 6, 3]]  # wxyz -> xyzw
         result_xyzw = (offset_rot * R.from_quat(root_rot_xyzw)).as_quat()
@@ -259,7 +305,7 @@ if __name__ == "__main__":
 
         transformed_human_data = {
             body_name: (
-                offset_rot.apply(pos - start_pos) + np.array([0.0, 0.0, INITIAL_ROBOT_HEIGHT]),
+                offset_rot.apply(pos - start_pos) + np.array([0.0, 0.0, INITIAL_ROBOT_HEIGHT + z_shift]),
                 (offset_rot * R.from_quat(rot[[1, 2, 3, 0]])).as_quat()[[3, 0, 1, 2]],
             )
             for body_name, (pos, rot) in retarget.scaled_human_data.items()

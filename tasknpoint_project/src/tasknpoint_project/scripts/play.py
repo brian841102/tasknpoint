@@ -36,7 +36,8 @@ class PlayConfig:
   video_height: int | None = None
   video_width: int | None = None
   camera: int | str | None = None
-  viewer: Literal["auto", "native", "viser"] = "auto"
+  viewer: Literal["auto", "native", "viser", "none"] = "auto"
+  """'none': no viewer; step the policy for video_length steps (use with --video) and exit."""
   no_terminations: bool = False
   """Disable all termination conditions (useful for viewing motions with dummy agents)."""
 
@@ -253,6 +254,13 @@ def run_play(task_id: str, cfg: PlayConfig):
     NativeMujocoViewer(env, policy).run()
   elif resolved_viewer == "viser":
     ViserPlayViewer(env, policy).run()
+  elif resolved_viewer == "none":
+    obs = env.get_observations()
+    with torch.inference_mode():
+      for _ in range(cfg.video_length):
+        obs, _, _, _ = env.step(policy(obs))
+    if cfg.video and log_dir is not None:
+      print(f"[INFO] Video saved under: {log_dir / 'videos' / 'play'}")
   else:
     raise RuntimeError(f"Unsupported viewer backend: {resolved_viewer}")
 
